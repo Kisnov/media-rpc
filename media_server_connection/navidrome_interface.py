@@ -7,6 +7,7 @@ import time
 import requests
 
 from cache_handler import get_poster_cache_key, set_poster_cache_key
+from .media_links import media_link, media_links
 
 
 NAVIDROME_ICON = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/navidrome.png"
@@ -70,6 +71,7 @@ class NavidromeServer:
                         "cover": url,
                         "name": title + " • " + artist,
                         "client_image": NAVIDROME_ICON, # TODO: this should be a client icon, but I'm not done yet. based on playerName
+                        "links": media_links(media_link("musicbrainz_recording", entry.get("musicBrainzId"))),
                     }
                 return None
             else:
