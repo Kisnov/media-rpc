@@ -6,7 +6,11 @@ import time
 
 import requests
 
+from cache_handler import get_poster_cache_key, set_poster_cache_key
+from .media_links import media_link, media_links
 
+
+NAVIDROME_ICON = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/navidrome.png"
 DEFAULT_NAVIDROME_SERVER_NAME = os.getenv("DEFAULT_NAVIDROME_SERVER_NAME", default="Navidrome")
 
 
@@ -53,8 +57,7 @@ class NavidromeServer:
                     state = (f"{year}" if year else "") + (
                             f" • {DEFAULT_NAVIDROME_SERVER_NAME}" if DEFAULT_NAVIDROME_SERVER_NAME else ""
                         )
-                    cover = entry.get("coverArt")
-                    url = self.cover_art_url(cover, size=300)
+                    url = self.get_cover_url(entry.get("albumId"))
                     print(f"Now playing on Navidrome: {title} by {artist}")
                     return {
                         "type": 2,
@@ -67,7 +70,8 @@ class NavidromeServer:
                         "end": int((time.time() + (duration - prog) / rate) * 1000),
                         "cover": url,
                         "name": title + " • " + artist,
-                        "client_image": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/navidrome.png" # TODO: this should be a client icon, but I'm not done yet. based on playerName
+                        "client_image": NAVIDROME_ICON, # TODO: this should be a client icon, but I'm not done yet. based on playerName
+                        "links": media_links(media_link("musicbrainz_recording", entry.get("musicBrainzId"))),
                     }
                 return None
             else:
@@ -77,13 +81,39 @@ class NavidromeServer:
             print(f"Error fetching data from Navidrome server: {e}")
             return None
 
-    def cover_art_url(self, cover_art_id, size=None):
-        md5_hash = self._generate_md5_hash(self.password + self.salt)
-        url = (
-            f"{self.server_url}/rest/getCoverArt"
-            f"?id={cover_art_id}&u={self.username}&t={md5_hash}&s={self.salt}"
-            f"&v=1.16.1&c=media-rpc"
-        )
-        if size:
-            url += f"&size={size}"
-        return url
+    def get_cover_url(self, album_id):
+        """
+        Get a public cover url for the album. getCoverArt urls need the subsonic credentials,
+        which would be visible to everyone who sees the presence, while getAlbumInfo2 returns
+        image links signed by the server that work without credentials.
+        """
+        if not album_id:
+            return NAVIDROME_ICON
+        cache_key = f"navidrome_{album_id}"
+        cached_url = get_poster_cache_key(cache_key)
+        if cached_url:
+            return cached_url
+        try:
+            response = requests.get(
+                f"{self.server_url}/rest/getAlbumInfo2",
+                params={
+                    "id": album_id,
+                    "u": self.username,
+                    "t": self._generate_md5_hash(self.password + self.salt),
+                    "s": self.salt,
+                    "f": "json",
+                    "v": "1.16.1",
+                    "c": "media-rpc",
+                },
+                timeout=2,
+            )
+            album_info = response.json()["subsonic-response"].get("albumInfo", {})
+            url = album_info.get("smallImageUrl")
+            if url and url.startswith("http"):
+                set_poster_cache_key(cache_key, url)
+                return url
+            print(f"[Navidrome Cover] No public cover found for album {album_id}")
+        except Exception as e:
+            # the request url contains the credentials, so only log the error type
+            print(f"[Navidrome Cover] Failed to fetch cover for album {album_id}: {type(e).__name__}")
+        return NAVIDROME_ICON
