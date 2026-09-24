@@ -196,7 +196,6 @@ class JellyfinServer:
                 "cover": self.get_jellyfin_cover(
                     base_url,
                     item_id_for_image,
-                    self.api_key,
                     series if series else title,
                     year,
                     item.get("Type"),
@@ -211,17 +210,19 @@ class JellyfinServer:
             print(f"[DEBUG] Failed to fetch data from Jellyfin server: {e}")
             return None
 
-    def get_jellyfin_cover(self,base_url, item_id, api_key, title, year, item_type):
+    def get_jellyfin_cover(self,base_url, item_id, title, year, item_type):
         cache_key = f"jellyfin_{item_id}"
         
         poster_cache_key = get_poster_cache_key(cache_key)
-        if poster_cache_key:
+        # older versions cached cover urls containing the api key, don't reuse those
+        if poster_cache_key and "api_key=" not in poster_cache_key:
             return poster_cache_key
 
         if USE_TMDB_IMAGE:
             return self.get_tmdb_poster(title, year, item_type)
         try:
-            cover_url = f"{base_url}/Items/{item_id}/Images/Primary?fillHeight=500&fillWidth=500&quality=96&api_key={api_key}"
+            # jellyfin serves images without auth, and this url is public in the presence, so it must not contain the api key
+            cover_url = f"{base_url}/Items/{item_id}/Images/Primary?fillHeight=500&fillWidth=500&quality=96"
             resp = requests.head(cover_url, timeout=2)
             if resp.status_code == 200:
                 print(f"[Jellyfin Cover] New cover cached for: {item_id}")

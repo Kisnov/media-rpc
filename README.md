@@ -364,7 +364,7 @@ After setup, test it by opening this in your browser (no login required):
 [https://your-abs-domain.com/cover/ANY_LIBRARY_ITEM_ID](https://your-abs-domain.com/cover/ANY_LIBRARY_ITEM_ID)
 ```
 
-For Jellyfin, no extra proxy setup is needed - cover art is fetched using your API key directly.
+For Jellyfin, no extra proxy setup is needed - Jellyfin serves cover art without authentication, so your API key is never put in the image URL. For Navidrome, the script asks the server for a signed public cover link, so your Navidrome credentials are never put in the image URL either.
 
 ---
 
