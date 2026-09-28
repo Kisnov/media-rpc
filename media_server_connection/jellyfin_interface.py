@@ -68,35 +68,32 @@ class JellyfinServer:
             if not session:
                 return None
             base_url = self.server_url.split("/Sessions")[0]
-
             item = session["NowPlayingItem"]
             title = item.get("Name")
+            title_with_prefix = title
             artist_name = DEFAULT_JELLYFIN_SERVER_NAME  # can be changed
             item_id = item.get("Id")
-            year = item.get("PremiereDate")
+            year = item.get("ProductionYear")
             if item.get("SeriesId"):
                 item_id = item.get("SeriesId")
                 artist_name = item.get("SeriesName")
                 if FORCE_SHOW_EPISODE_INDEX:
-                    season_number = f"{item.get("ParentIndexNumber"):02}" 
-                    episodeNumber = f"{item.get("IndexNumber"):02}" 
-                    prefix = 'S'+season_number+'E'+episodeNumber
-                    title_with_prefix = prefix + ' - ' + title
+                    season_number = item.get("ParentIndexNumber")
+                    episode_number = item.get("IndexNumber")
+                    if season_number is not None and episode_number is not None:
+                        title_with_prefix = f"S{season_number:02}E{episode_number:02} - {title}"
+
                 if GET_SHOW_YEAR and item.get("Type") == "Episode":
                     year = self.get_show_year(base_url, item_id, self.api_key, self.user_id)
             if  item.get("Type") == "Movie":
                 year = item.get("ProductionYear")
-            if item.get("ArtistItems"):
-                if item.get("ArtistItems")[0].get("Id"):
-                    item_id = item.get("ArtistItems")[0].get("Id")
-                    artist_name = item.get("AlbumArtist")
+            if item.get("ArtistItems") and item.get("ArtistItems")[0].get("Id"):   
+                item_id = item.get("ArtistItems")[0].get("Id")
+                artist_name = item.get("AlbumArtist")
 
             if self.ignore_libraries:
-                key = get_library_cache_key(item_id)
-                if key is not None:
-                    if not key:
-                        return None
-                else:
+                folder_names = get_library_cache_key(item_id)
+                if not isinstance(folder_names, list):
                     try:
                         user_id = session.get("UserId")
                         anc_url = f"{base_url}/Items/{item_id}/Ancestors"
@@ -107,30 +104,18 @@ class JellyfinServer:
                             timeout=9,
                         )
 
-                        if parents_resp.status_code == 200:
-                            parents = parents_resp.json()
-                            folder_names = [p.get("Name") for p in parents]
-
-                            is_safe = True
-                            for name in folder_names:
-                                if name in self.ignore_libraries:
-                                    print(f"[BLOCKED] Hidden Library Found: {name}")
-                                    is_safe = False
-                                    break
-                            set_library_cache_key(item_id, is_safe)
-
-                            if not is_safe:
-                                return None
-
-                        else:
-                            print(
-                                f"[DEBUG] Ancestor Check Failed: {parents_resp.status_code}"
-                            )
+                        if parents_resp.status_code != 200:
+                            print(f"[DEBUG] Ancestor Check Failed: {parents_resp.status_code}")
                             return None
-
+                        folder_names = [p.get("Name") for p in parents_resp.json()]
+                        set_library_cache_key(item_id, folder_names)     
                     except Exception as e:
                         print(f"[DEBUG] Blacklist Error: {e}")
                         return None
+                blocked = next((n for n in folder_names if n in self.ignore_libraries), None)
+                if blocked:
+                    print(f"[BLOCKED] Hidden Library Found: {blocked}")
+                    return None
 
             prog = session["PlayState"].get("PositionTicks", 0) / 10000000
             dur = item.get("RunTimeTicks", 0) / 10000000
@@ -189,7 +174,7 @@ class JellyfinServer:
             return {
                 "type": discord_type,
                 "status": status,
-                "details":title_with_prefix if FORCE_SHOW_EPISODE_INDEX and item.get("SeriesId") else title,
+                "details":title_with_prefix,
                 "state": state_text,
                 "start": int((time.time() - prog) * 1000),
                 "end": int((time.time() - prog + dur) * 1000),

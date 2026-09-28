@@ -5,6 +5,7 @@ import time
 import requests
 
 from discord_connection import client_properties
+from discord_connection.discord_auth_error import DiscordAuthError
 from discord_connection.gateway import Gateway
 
 mp_url_cache = {}
@@ -30,11 +31,15 @@ class DiscordGatewayHandler:
                 gw.connect()
                 print("Connecting to Discord gateway...")
                 while not gw.get_ready():
+                    if gw.auth_failed:
+                        raise DiscordAuthError("Discord rejected DISCORD_TOKEN")
                     if gw.error:
                         raise Exception(gw.error)
                     time.sleep(0.2)
                 print("Connected to Discord!")
                 return gw
+            except DiscordAuthError:
+                raise
             except Exception as e:
                 print(f"Gateway error: {e}, retrying in 5s...")
                 time.sleep(10)
@@ -47,6 +52,8 @@ class DiscordGatewayHandler:
         sys.exit(0)
 
     def is_connected(self):
+        if self.gateway and self.gateway.auth_failed:
+            raise DiscordAuthError("Discord rejected DISCORD_TOKEN, it has probably expired. Get a new one and restart.")
         return self.gateway and self.gateway.get_state() == 1
 
     def disconnect(self):
@@ -72,10 +79,10 @@ class DiscordGatewayHandler:
             print("No activity to update, and gateway is not connected.")
             return
         if not (self.gateway and self.gateway.get_state() == 1): return
-        small_image = activity["assets"]["small_image"]
+        small_image = activity["assets"].get("small_image")
         if small_image and small_image.startswith("http"):
             activity["assets"]["small_image"] = self.resolve_mp_url(small_image)
-        large_image = activity["assets"]["large_image"]
+        large_image = activity["assets"].get("large_image")
         if large_image and large_image.startswith("http"):
             activity["assets"]["large_image"] = self.resolve_mp_url(large_image)
         if self.gateway and self.gateway.get_state() == 1:

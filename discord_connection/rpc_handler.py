@@ -1,13 +1,15 @@
 import os
 import sys
 import threading
-
-from pypresence.presence import Presence
 import time
+
+from pypresence.exceptions import ServerError
+from pypresence.presence import Presence
 
 
 class DiscordRPCHandler:
     rpc = None
+
     def __init__(self, client_id):
         self.client_id = client_id
         self._reconnecting = False
@@ -23,10 +25,10 @@ class DiscordRPCHandler:
 
     def sigint_handler(self, signum, frame):
         payload = {
-                    "cmd": "SET_ACTIVITY",
-                    "args": {"pid": os.getpid(), "activity": None},
-                    "nonce": "c",
-                }
+            "cmd": "SET_ACTIVITY",
+            "args": {"pid": os.getpid(), "activity": None},
+            "nonce": "c",
+        }
         try:
             self.rpc.update(payload_override=payload)
         except:
@@ -57,6 +59,9 @@ class DiscordRPCHandler:
                     "nonce": str(time.time()),
                 }
                 self.rpc.update(payload_override=payload)
+            except ServerError as e:
+                # discord rejected this activity, the connection is fine
+                print(f"Discord rejected the presence update: {e}")
             except Exception as e:
                 print(f"Error updating RPC presence: {e}")
                 self._handle_disconnect()
