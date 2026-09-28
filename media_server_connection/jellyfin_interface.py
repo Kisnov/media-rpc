@@ -11,8 +11,14 @@ DEFAULT_JELLYFIN_SERVER_NAME = os.getenv("DEFAULT_JELLYFIN_SERVER_NAME", default
 GET_SHOW_YEAR = os.getenv("GET_SHOW_YEAR", default="False").lower() == "true"
 USE_SERIES_IMAGE = os.getenv("USE_SERIES_IMAGE", default="False").lower() == "true"
 USE_TMDB_IMAGE = os.getenv("USE_TMDB_IMAGE", default="False").lower() == "true"
+FORCE_SHOW_EPISODE_INDEX = os.getenv("FORCE_SHOW_EPISODE_INDEX", default="false").lower() == "true"
+SHOW_TITLE_IN_TOP = os.getenv("SHOW_TITLE_IN_TOP", default="false").lower() == "true"
+
+show_to_year = {}
 
 class JellyfinServer:
+    
+
     def __init__(self, server_url, api_key, user_id, ignore_libraries, tmdb_api_key):
         self.server_url = server_url
         self.api_key = api_key
@@ -21,6 +27,9 @@ class JellyfinServer:
         self.tmdb_api_key = tmdb_api_key
 
     def get_show_year(self, base_url, series_id, api_key, user_id):
+        year = show_to_year.get(series_id)
+        if year is not None: 
+            return year
         try:
             url = f"{base_url}/Items"
             params = {"userId": user_id, "ids": series_id}
@@ -29,6 +38,7 @@ class JellyfinServer:
             if response.status_code == 200:
                 data = response.json().get("Items", [None])[0] # Assuming the first item is the series (which it will be because we ask for just one show)
                 year = data.get("ProductionYear")
+                show_to_year[series_id] = year
                 return year
             else:
                 print(f"[DEBUG] Failed to fetch show year: {response.status_code}")
@@ -58,29 +68,32 @@ class JellyfinServer:
             if not session:
                 return None
             base_url = self.server_url.split("/Sessions")[0]
-
             item = session["NowPlayingItem"]
             title = item.get("Name")
+            title_with_prefix = title
             artist_name = DEFAULT_JELLYFIN_SERVER_NAME  # can be changed
             item_id = item.get("Id")
-            year = item.get("PremiereDate")
+            year = item.get("ProductionYear")
             if item.get("SeriesId"):
                 item_id = item.get("SeriesId")
                 artist_name = item.get("SeriesName")
+                if FORCE_SHOW_EPISODE_INDEX:
+                    season_number = item.get("ParentIndexNumber")
+                    episode_number = item.get("IndexNumber")
+                    if season_number is not None and episode_number is not None:
+                        title_with_prefix = f"S{season_number:02}E{episode_number:02} - {title}"
+
                 if GET_SHOW_YEAR and item.get("Type") == "Episode":
                     year = self.get_show_year(base_url, item_id, self.api_key, self.user_id)
             if  item.get("Type") == "Movie":
                 year = item.get("ProductionYear")
-            if item.get("ArtistItems"):
-                if item.get("ArtistItems")[0].get("Id"):
-                    item_id = item.get("ArtistItems")[0].get("Id")
-                    artist_name = item.get("AlbumArtist")
+            if item.get("ArtistItems") and item.get("ArtistItems")[0].get("Id"):   
+                item_id = item.get("ArtistItems")[0].get("Id")
+                artist_name = item.get("AlbumArtist")
+
             if self.ignore_libraries:
-                key = get_library_cache_key(item_id)
-                if key is not None:
-                    if not key:
-                        return None
-                else:
+                folder_names = get_library_cache_key(item_id)
+                if not isinstance(folder_names, list):
                     try:
                         user_id = session.get("UserId")
                         anc_url = f"{base_url}/Items/{item_id}/Ancestors"
@@ -91,34 +104,22 @@ class JellyfinServer:
                             timeout=9,
                         )
 
-                        if parents_resp.status_code == 200:
-                            parents = parents_resp.json()
-                            folder_names = [p.get("Name") for p in parents]
-
-                            is_safe = True
-                            for name in folder_names:
-                                if name in self.ignore_libraries:
-                                    print(f"[BLOCKED] Hidden Library Found: {name}")
-                                    is_safe = False
-                                    break
-                            set_library_cache_key(item_id, is_safe)
-
-                            if not is_safe:
-                                return None
-
-                        else:
-                            print(
-                                f"[DEBUG] Ancestor Check Failed: {parents_resp.status_code}"
-                            )
+                        if parents_resp.status_code != 200:
+                            print(f"[DEBUG] Ancestor Check Failed: {parents_resp.status_code}")
                             return None
-
+                        folder_names = [p.get("Name") for p in parents_resp.json()]
+                        set_library_cache_key(item_id, folder_names)     
                     except Exception as e:
                         print(f"[DEBUG] Blacklist Error: {e}")
                         return None
+                blocked = next((n for n in folder_names if n in self.ignore_libraries), None)
+                if blocked:
+                    print(f"[BLOCKED] Hidden Library Found: {blocked}")
+                    return None
 
             prog = session["PlayState"].get("PositionTicks", 0) / 10000000
             dur = item.get("RunTimeTicks", 0) / 10000000
-            if not GET_SHOW_YEAR:
+            if not GET_SHOW_YEAR or item.get("Type") == 'Audio':
                 year = item.get("ProductionYear")
             series = item.get("SeriesName")
             year_text = (f"({year})" if series else f"{year}") if year else ""
@@ -127,6 +128,11 @@ class JellyfinServer:
                 if DEFAULT_JELLYFIN_SERVER_NAME
                 else ""
             )
+            name = title + " • " + artist_name
+            if SHOW_TITLE_IN_TOP and item.get("SeriesName"):
+                name = item.get("SeriesName")
+
+
 
             # Logic to get client icon in the little area in discord activity details
             client = session.get("Client")
@@ -168,14 +174,13 @@ class JellyfinServer:
             return {
                 "type": discord_type,
                 "status": status,
-                "details": title,
+                "details":title_with_prefix,
                 "state": state_text,
                 "start": int((time.time() - prog) * 1000),
                 "end": int((time.time() - prog + dur) * 1000),
                 "cover": self.get_jellyfin_cover(
                     base_url,
                     item_id_for_image,
-                    self.api_key,
                     series if series else title,
                     year,
                     item.get("Type"),
@@ -184,23 +189,25 @@ class JellyfinServer:
                 "client_image": small_icon,
                 "client": client,
                 "artist": artist_name,
-                "name": title + " • " + artist_name,
+                "name": name ,
             }
         except Exception as e:
             print(f"[DEBUG] Failed to fetch data from Jellyfin server: {e}")
             return None
 
-    def get_jellyfin_cover(self,base_url, item_id, api_key, title, year, item_type):
+    def get_jellyfin_cover(self,base_url, item_id, title, year, item_type):
         cache_key = f"jellyfin_{item_id}"
         
         poster_cache_key = get_poster_cache_key(cache_key)
-        if poster_cache_key:
+        # older versions cached cover urls containing the api key, don't reuse those
+        if poster_cache_key and "api_key=" not in poster_cache_key:
             return poster_cache_key
 
         if USE_TMDB_IMAGE:
             return self.get_tmdb_poster(title, year, item_type)
         try:
-            cover_url = f"{base_url}/Items/{item_id}/Images/Primary?fillHeight=500&fillWidth=500&quality=96&api_key={api_key}"
+            # jellyfin serves images without auth, and this url is public in the presence, so it must not contain the api key
+            cover_url = f"{base_url}/Items/{item_id}/Images/Primary?fillHeight=500&fillWidth=500&quality=96"
             resp = requests.head(cover_url, timeout=2)
             if resp.status_code == 200:
                 print(f"[Jellyfin Cover] New cover cached for: {item_id}")
