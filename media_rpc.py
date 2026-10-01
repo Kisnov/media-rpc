@@ -56,6 +56,10 @@ def run_loop():
                 "type": data["type"],
                 "timestamps": timestamps,
             }
+            # drop empty values, discord rejects empty strings
+            activity["assets"] = {k: v for k, v in activity["assets"].items() if v}
+            if not activity["state"]:
+                del activity["state"]
             add_links(activity, data.get("links"))
             discord_handler.update_presence(activity)
         else:
