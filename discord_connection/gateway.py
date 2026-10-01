@@ -30,6 +30,7 @@ QOS_PAYLOAD = {"ver": 26, "active": True, "reason": "foregrounded"}
 
 status_unpacker = struct.Struct("!H")
 
+
 class Gateway:
     """Methods for fetching and sending data to Discord gateway through websocket"""
 
@@ -57,7 +58,7 @@ class Gateway:
                 self.capabilities = int(capablities)
             except ValueError:
                 pass
-
+        self.auth_failed = False
         self.client_prop = client_prop
         self.init_time = time.time() * 1000
         self.token = token
@@ -266,6 +267,7 @@ class Gateway:
                 if status not in (1000, 1001):
                     print(f"Gateway status code: {status}, reason: {reason}")
                 if status == 4004:
+                    self.auth_failed = True   
                     self.run = False
                 self.resumable = status in (4000, 4009)
                 break
@@ -465,7 +467,9 @@ class Gateway:
                 heartbeat_sent_time = int(time.time())
                 if not self.heartbeat_received:
                     self.heartbeat_missed_count += 1
-                    print(f"Heartbeat reply not received ({self.heartbeat_missed_count}/3)")
+                    print(
+                        f"Heartbeat reply not received ({self.heartbeat_missed_count}/3)"
+                    )
                     if self.heartbeat_missed_count >= 3:
                         print("Too many missed heartbeats, reconnecting")
                         self.resumable = True
@@ -551,7 +555,9 @@ class Gateway:
                 if self.ws:
                     self.ws.close(timeout=0)  # this will stop receiver
                 time.sleep(1)  # so receiver ends before opening new socket
-                self.inflator = zlib.decompressobj()  # otherwise decompression wont work
+                self.inflator = (
+                    zlib.decompressobj()
+                )  # otherwise decompression wont work
                 self.ready = False  # will receive new ready event
                 self.ws = websocket.WebSocket()
                 self.connect_ws()
@@ -573,7 +579,9 @@ class Gateway:
             with self.state_lock:
                 self.state = 1
             print("Connection established after reconnect")
-            self.update_presence('idle', activities=self.my_status.get("activities", []), afk=True)  # update presence after reconnect
+            self.update_presence(
+                "idle", activities=self.my_status.get("activities", []), afk=True
+            )  # update presence after reconnect
         except websocket._exceptions.WebSocketAddressException:
             if not self.wait:  # if not running from wait_oline
                 print("No internet connection")
@@ -625,7 +633,7 @@ class Gateway:
         all_activities = []
         self.my_status = {
             "activities": activities or [],
-            }
+        }
         if custom_status:
             all_activities.append(
                 {
@@ -639,9 +647,7 @@ class Gateway:
         if activities:
             for activity in activities:
                 all_activities.append(activity)
-        print(
-            f"Updating presence: status={status}, activities={activities}, afk={afk}"
-        )
+        print(f"Updating presence: status={status}, activities={activities}, afk={afk}")
 
         payload = {
             "op": 3,
@@ -667,4 +673,3 @@ class Gateway:
         except zlib.error as e:
             print(f"zlib error: {e}")
             return None
-    
